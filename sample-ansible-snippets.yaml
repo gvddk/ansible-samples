@@ -1,0 +1,116 @@
+#https://medium.com/@mohitverma160288/crossplane-argocd-aws-eks-cluster-3a043ad701b4
+
+- name: Add Docker GPG apt Key
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Add Docker Repository
+  apt_repository:
+    repo: deb https://download.docker.com/linux/ubuntu bionic stable
+    state: present
+
+- name: Update apt and install docker-ce
+  apt: update_cache=yes name=docker-ce state=latest
+
+
+- name: Install Docker Module for Python
+  pip:
+    name: docker
+
+- name: Start Docker service
+  service:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: install the packages
+  apt:
+    name: "{{ item }}"
+    state: latest
+    update_cache: yes
+  loop:
+    - apt-transport-https
+    - ca-certificates
+    - wget
+    - cloud-utils
+    - curl
+    - software-properties-common
+    - python3-pip
+    - virtualenv
+    - python3-setuptools
+    - unzip
+    - jq
+
+- name: Check if a reboot is needed on all servers
+  register: reboot_required_file
+  stat: path=/var/run/reboot-required get_md5=no
+
+- name: Reboot the box if kernel updated
+  reboot:
+      msg: "Reboot initiated by Ansible for kernel updates"
+      connect_timeout: 5
+      reboot_timeout: 300
+      pre_reboot_delay: 0
+      post_reboot_delay: 30
+      test_command: uptime
+    when: reboot_required_file.stat.exists
+
+- name: checking for helm installation
+  stat:
+    path: /bin/helm
+  register: helm_check
+
+- name: install helm in the cluster
+  shell: |
+    sudo wget https://get.helm.sh/helm-v3.6.3-linux-amd64.tar.gz --no-check-certificate
+    sudo tar -zxvf helm-v3.6.3-linux-amd64.tar.gz
+    sudo mv  ./linux-amd64/helm /bin
+  when: not helm_check.stat.exists
+
+- name: checking for kubeseal installation
+  stat:
+    path: /bin/kubeseal
+  register: kubeseal_check
+
+- name: install kubeseal in the cluster
+  shell: |
+    sudo wget https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.17.3/kubeseal-0.17.3-linux-amd64.tar.gz --no-check-certificate
+    sudo tar xvfz kubeseal-0.17.3-linux-amd64.tar.gz
+    sudo mv  ./kubeseal /bin
+  when: not kubeseal_check.stat.exists
+
+- name: Creates directory
+  file:
+    path: /home/vagrant/kind/
+    owner: vagrant
+    mode: 0755
+    state: directory
+
+- name: Correct openssl parameter
+  lineinfile:
+    dest: /etc/ssl/openssl.cnf
+    regexp: '^RANDFILE'
+    state: absent
+    backup: yes
+
+- name: Sleep for 80 seconds and timeout
+  tags: sleep80
+  wait_for:
+      delay: 80
+      timeout: 0
+
+- name: Enable Password Authentication
+  lineinfile:
+    dest: /etc/ssh/sshd_config
+    regexp: '^PasswordAuthentication'
+    line: "PasswordAuthentication yes"
+    state: present
+    backup: yes
+  notify:
+    - restart ssh
+
+handlers:
+  - name: restart ssh
+    service: name=sshd state=restarted
+
